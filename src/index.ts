@@ -18,11 +18,26 @@ const client = new kafka.KafkaClient({kafkaHost: 'kafka:9092', connectTimeout: 1
 const consumer = new kafka.Consumer(client, [{ topic: 'reddit-comments-sentiments', partition: 0 }, { topic: "batch_result", partition: 0 }], { autoCommit: false });
 
 const wss = new WebSocket.Server({ port: 4000 });
+
 const comments: Map<String, Comment> = new Map();
+let latestBatchUpdate: BatchUpdate = {};
 
 wss.on('connection', function connection(ws: WebSocket) {
+    const commentMessage : SocketMessage = {
+        type: "new_comment",
+        data: Array.from(comments.values()).slice(-6)
+    };
+
+    const batchUpdateMessage : SocketMessage = {
+        type: "batch_update",
+        data: latestBatchUpdate
+    };
+
     // send last 6 comments
-    ws.send(JSON.stringify(Array.from(comments.values()).slice(-6)));
+    ws.send(JSON.stringify(commentMessage));
+    // send latest batch update
+    ws.send(JSON.stringify(batchUpdateMessage));
+
     console.log('new connection');
     ws.on('message', function incoming(message: string) {
         console.log('received: %s', message);
@@ -52,9 +67,15 @@ function handleComment(message: string) {
     const comment = parseComment(message);
     comments.set(comment.comment_id, comment);
     console.log('received comment: %s', comment.comment_id);
+
+    const commentMessage : SocketMessage = {
+        type: "new_comment",
+        data: Array.from(comments.values()).slice(-6)
+    };
+
     wss.clients.forEach(function each(client) {
         if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: "new_comment", data: Array.from(comments.values()).slice(-6) }));
+            client.send(JSON.stringify(commentMessage));
         }
     });
 }
@@ -80,9 +101,16 @@ function parseComment(comment: string): Comment {
 
 function handleBatchResult(message: string) {
     const batchUpdate = parseBatchResult(message);
+
+    latestBatchUpdate = batchUpdate;
+
+    const batchUpdateMessage : SocketMessage = {
+        type: "batch_update",
+        data: batchUpdate
+    };
     wss.clients.forEach(function each(client) {
         if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: "batch_update", data: batchUpdate }));
+            client.send(JSON.stringify(batchUpdateMessage));
         }
     });
 }
